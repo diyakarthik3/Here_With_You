@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
@@ -100,13 +98,12 @@ class AdminMediaService {
 
   UploadedMediaFile _fileFromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? const <String, dynamic>{};
-    final bytesBase64 = data['bytesBase64'] as String?;
 
     return UploadedMediaFile(
       id: doc.id,
       fileName: (data['fileName'] as String?) ?? 'Uploaded image',
       source: _sourceFromString(data['source'] as String?),
-      bytes: bytesBase64 == null ? null : base64Decode(bytesBase64),
+      bytes: null,
       downloadUrl: (data['downloadUrl'] as String?) ?? (data['url'] as String?),
       originalPath: data['originalPath'] as String?,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
@@ -117,13 +114,6 @@ class AdminMediaService {
     DocumentSnapshot<Map<String, dynamic>> doc,
   ) {
     final data = doc.data() ?? const <String, dynamic>{};
-    final imageBytesBase64 = data['imageBytesBase64'] as String?;
-    final firstBytes = data['firstImageBytesBase64'] as String?;
-    final decodedBytes = imageBytesBase64 != null
-        ? base64Decode(imageBytesBase64)
-        : firstBytes != null
-        ? base64Decode(firstBytes)
-        : Uint8List(0);
     final imageName =
         (data['imageName'] as String?) ??
         (data['firstImageName'] as String?) ??
@@ -136,7 +126,7 @@ class AdminMediaService {
     return MixAndMatchPairRecord(
       id: doc.id,
       imageName: imageName,
-      imageBytes: decodedBytes,
+      imageBytes: Uint8List(0),
       imageUrl: imageUrl,
       description: (data['description'] as String?) ?? '',
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
@@ -387,11 +377,7 @@ class AdminMediaService {
               .get();
           final images = snapshot.docs
               .map(_fileFromDoc)
-              .where(
-                (f) =>
-                    (f.bytes?.isNotEmpty ?? false) ||
-                    (f.downloadUrl?.isNotEmpty ?? false),
-              )
+              .where((f) => f.downloadUrl?.isNotEmpty ?? false)
               .toList();
           if (images.isNotEmpty) return images;
         }
@@ -402,11 +388,7 @@ class AdminMediaService {
 
     // Fallback: use the admin's locally cached files (admin preview mode).
     return uploadedFiles.value
-        .where(
-          (f) =>
-              (f.bytes?.isNotEmpty ?? false) ||
-              (f.downloadUrl?.isNotEmpty ?? false),
-        )
+        .where((f) => f.downloadUrl?.isNotEmpty ?? false)
         .toList();
   }
 
@@ -435,11 +417,7 @@ class AdminMediaService {
               .get();
           final pairs = snapshot.docs.map(_pairFromDoc).toList();
           final usablePairs = pairs
-              .where(
-                (pair) =>
-                    pair.imageBytes.isNotEmpty ||
-                    (pair.imageUrl?.isNotEmpty ?? false),
-              )
+              .where((pair) => pair.imageUrl?.isNotEmpty ?? false)
               .toList();
           if (usablePairs.isNotEmpty) return usablePairs;
         }

@@ -104,7 +104,7 @@ class _AdminMediaUploadScreenState extends State<AdminMediaUploadScreen> {
   }
 
   Future<void> _pickFromLocalFiles() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.image,
       withData: true,
     );

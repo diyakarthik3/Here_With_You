@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:here_with_you/main.dart';
@@ -8,9 +7,9 @@ import 'package:here_with_you/services/player_progress_service.dart';
 import 'package:here_with_you/services/reward_service.dart';
 
 class PuzzlePixScreen extends StatefulWidget {
-  final List<Uint8List> imageBytes;
+  final List<String> imageUrls;
 
-  const PuzzlePixScreen({super.key, required this.imageBytes});
+  const PuzzlePixScreen({super.key, required this.imageUrls});
 
   @override
   State<PuzzlePixScreen> createState() => _PuzzlePixScreenState();
@@ -32,7 +31,7 @@ class _PuzzlePixScreenState extends State<PuzzlePixScreen> {
   bool _isBreakActive = false;
   int _breakSecondsLeft = 30;
   bool _showBoardOverlay = false;
-  Uint8List? _selectedImageBytes;
+  String? _selectedImageUrl;
   bool _hasShownCompletionDialog = false;
 
   @override
@@ -43,9 +42,9 @@ class _PuzzlePixScreenState extends State<PuzzlePixScreen> {
       if (mounted) setState(() {});
     });
 
-    if (widget.imageBytes.isNotEmpty) {
-      _selectedImageBytes =
-          widget.imageBytes[_random.nextInt(widget.imageBytes.length)];
+    if (widget.imageUrls.isNotEmpty) {
+      _selectedImageUrl =
+          widget.imageUrls[_random.nextInt(widget.imageUrls.length)];
     }
   }
 
@@ -136,7 +135,7 @@ class _PuzzlePixScreenState extends State<PuzzlePixScreen> {
   }
 
   Future<void> _showPreviewDialog() async {
-    final previewImageBytes = _selectedImageBytes;
+    final previewImageUrl = _selectedImageUrl;
 
     await showDialog<void>(
       context: context,
@@ -159,9 +158,7 @@ class _PuzzlePixScreenState extends State<PuzzlePixScreen> {
                 borderRadius: BorderRadius.circular(14),
                 child: AspectRatio(
                   aspectRatio: 1,
-                  child: _buildPuzzlePreviewImage(
-                    imageBytes: previewImageBytes,
-                  ),
+                  child: _buildPuzzlePreviewImage(imageUrl: previewImageUrl),
                 ),
               ),
               const SizedBox(height: 12),
@@ -180,12 +177,13 @@ class _PuzzlePixScreenState extends State<PuzzlePixScreen> {
   }
 
   Widget _buildPuzzleSourceImage({BoxFit fit = BoxFit.cover}) {
-    final bytes = _selectedImageBytes;
-    if (bytes != null && bytes.isNotEmpty) {
-      return Image.memory(
-        bytes,
+    final imageUrl = _selectedImageUrl;
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      return Image.network(
+        imageUrl,
         fit: fit,
         gaplessPlayback: true,
+        loadingBuilder: _networkImageLoadingBuilder,
         errorBuilder: (_, _, _) => const ColoredBox(color: Color(0xFFF6F3EE)),
       );
     }
@@ -193,17 +191,39 @@ class _PuzzlePixScreenState extends State<PuzzlePixScreen> {
     return const ColoredBox(color: Color(0xFFF6F3EE));
   }
 
-  Widget _buildPuzzlePreviewImage({Uint8List? imageBytes}) {
-    if (imageBytes != null && imageBytes.isNotEmpty) {
-      return Image.memory(
-        imageBytes,
+  Widget _buildPuzzlePreviewImage({String? imageUrl}) {
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      return Image.network(
+        imageUrl,
         fit: BoxFit.cover,
         gaplessPlayback: true,
+        loadingBuilder: _networkImageLoadingBuilder,
         errorBuilder: (_, _, _) => const ColoredBox(color: Color(0xFFF6F3EE)),
       );
     }
 
     return const ColoredBox(color: Color(0xFFF6F3EE));
+  }
+
+  Widget _networkImageLoadingBuilder(
+    BuildContext context,
+    Widget child,
+    ImageChunkEvent? loadingProgress,
+  ) {
+    if (loadingProgress == null) {
+      return child;
+    }
+
+    return const ColoredBox(
+      color: Color(0xFFF6F3EE),
+      child: Center(
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+    );
   }
 
   Widget _buildBreaktimeOverlay() {
@@ -486,7 +506,7 @@ class _PuzzlePixScreenState extends State<PuzzlePixScreen> {
     required double tileSize,
     required double boardSize,
     required bool isDragging,
-    Uint8List? imageBytes,
+    String? imageUrl,
   }) {
     return SizedBox(
       width: tileSize,
@@ -504,7 +524,7 @@ class _PuzzlePixScreenState extends State<PuzzlePixScreen> {
             child: SizedBox(
               width: tileSize,
               height: tileSize,
-              child: imageBytes != null && imageBytes.isNotEmpty
+              child: imageUrl != null && imageUrl.isNotEmpty
                   ? OverflowBox(
                       alignment: Alignment.topLeft,
                       maxWidth: double.infinity,
@@ -518,10 +538,11 @@ class _PuzzlePixScreenState extends State<PuzzlePixScreen> {
                         child: SizedBox(
                           width: boardSize,
                           height: boardSize,
-                          child: Image.memory(
-                            imageBytes,
+                          child: Image.network(
+                            imageUrl,
                             fit: BoxFit.fill,
                             gaplessPlayback: true,
+                            loadingBuilder: _networkImageLoadingBuilder,
                             errorBuilder: (_, _, _) =>
                                 const ColoredBox(color: Color(0xFFF6F3EE)),
                           ),
@@ -601,7 +622,7 @@ class _PuzzlePixScreenState extends State<PuzzlePixScreen> {
                 (_lastCanvasSize!.width - canvas.width).abs() > 1 ||
                 (_lastCanvasSize!.height - canvas.height).abs() > 1;
 
-            if (_selectedImageBytes == null) {
+            if (_selectedImageUrl == null || _selectedImageUrl!.isEmpty) {
               return const Center(
                 child: Text(
                   'No puzzle images available yet.',
@@ -892,7 +913,7 @@ class _PuzzlePixScreenState extends State<PuzzlePixScreen> {
                                     boardSize: boardSize,
                                     isDragging:
                                         _draggingPieceIndex == piece.index,
-                                    imageBytes: _selectedImageBytes,
+                                    imageUrl: _selectedImageUrl,
                                   ),
                                 ),
                               ),

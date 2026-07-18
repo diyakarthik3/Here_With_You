@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -82,7 +81,11 @@ class MyApp extends StatelessWidget {
 class AuthGate extends StatelessWidget {
   const AuthGate({super.key});
 
-  Future<DocumentSnapshot<Map<String, dynamic>>?> _resolveUserDoc(String uid) async {
+  static final Set<String> _prefetchedUsers = <String>{};
+
+  Future<DocumentSnapshot<Map<String, dynamic>>?> _resolveUserDoc(
+    String uid,
+  ) async {
     try {
       return await FirebaseFirestore.instance
           .collection('users')
@@ -92,6 +95,52 @@ class AuthGate extends StatelessWidget {
     } catch (_) {
       return null;
     }
+  }
+
+  Future<void> _prefetchGameImages(BuildContext context) async {
+    try {
+      final puzzleFiles = await AdminMediaService.instance
+          .fetchPuzzleImagesForLinkedAdmin();
+      final mixAndMatchPairs = await AdminMediaService.instance
+          .fetchMixAndMatchPairsForLinkedAdmin();
+
+      final urls = <String>{
+        ...puzzleFiles
+            .map((file) => file.downloadUrl)
+            .whereType<String>()
+            .where((url) => url.isNotEmpty),
+        ...mixAndMatchPairs
+            .map((pair) => pair.imageUrl)
+            .whereType<String>()
+            .where((url) => url.isNotEmpty),
+      };
+
+      for (final url in urls) {
+        if (!context.mounted) {
+          return;
+        }
+
+        try {
+          await precacheImage(NetworkImage(url), context);
+        } catch (_) {
+          // Ignore failed prefetches so one broken asset does not block auth.
+        }
+      }
+    } catch (_) {
+      // Ignore prefetch errors and allow the app to continue normally.
+    }
+  }
+
+  void _schedulePrefetchIfNeeded(BuildContext context, User user, String role) {
+    if (role == 'admin') {
+      return;
+    }
+
+    if (!_prefetchedUsers.add(user.uid)) {
+      return;
+    }
+
+    unawaited(_prefetchGameImages(context));
   }
 
   @override
@@ -122,8 +171,10 @@ class AuthGate extends StatelessWidget {
             final userDoc = userDocSnapshot.data;
             final userData = userDoc?.data();
             final role = (userData?['role'] as String?) ?? 'user';
-            final name = (userData?['name'] as String?) ?? user.displayName ?? 'User';
+            final name =
+                (userData?['name'] as String?) ?? user.displayName ?? 'User';
             UserSession.name = name;
+            _schedulePrefetchIfNeeded(context, user, role);
 
             return FutureBuilder<String?>(
               future: AppNavigationState.loadRoute(),
@@ -141,19 +192,26 @@ class AuthGate extends StatelessWidget {
                 }
 
                 if (route == 'puzzle_pix') {
-                  return FutureBuilder<List<Uint8List>>(
+                  return FutureBuilder<List<String>>(
                     future: AdminMediaService.instance
                         .fetchPuzzleImagesForLinkedAdmin()
-                        .then((files) => files.map((f) => f.bytes!).toList()),
+                        .then(
+                          (files) => files
+                              .map((f) => f.downloadUrl)
+                              .whereType<String>()
+                              .where((url) => url.isNotEmpty)
+                              .toList(),
+                        ),
                     builder: (context, puzzleSnapshot) {
-                      if (puzzleSnapshot.connectionState != ConnectionState.done) {
+                      if (puzzleSnapshot.connectionState !=
+                          ConnectionState.done) {
                         return const Scaffold(
                           body: Center(child: CircularProgressIndicator()),
                         );
                       }
 
-                      final imageBytes = puzzleSnapshot.data ?? const <Uint8List>[];
-                      return PuzzlePixScreen(imageBytes: imageBytes);
+                      final imageUrls = puzzleSnapshot.data ?? const <String>[];
+                      return PuzzlePixScreen(imageUrls: imageUrls);
                     },
                   );
                 }
@@ -171,7 +229,9 @@ class AuthGate extends StatelessWidget {
                       );
                     }
 
-                    return MainNavigationPage(initialIndex: tabSnapshot.data ?? 0);
+                    return MainNavigationPage(
+                      initialIndex: tabSnapshot.data ?? 0,
+                    );
                   },
                 );
               },
@@ -234,7 +294,9 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
 
         UserSession.name = name;
 
-        final destination = role == 'admin' ? const AdminDashboard() : const MainNavigationPage();
+        final destination = role == 'admin'
+            ? const AdminDashboard()
+            : const MainNavigationPage();
 
         _goToDestination(destination);
       } else {
@@ -252,11 +314,7 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: CircularProgressIndicator(),
-      ),
-    );
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
   }
 }
 
@@ -317,11 +375,21 @@ class LoginScreen extends StatelessWidget {
                                     Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (context) => const LoginFormScreen(userType: 'user'),
+                                        builder: (context) =>
+                                            const LoginFormScreen(
+                                              userType: 'user',
+                                            ),
                                       ),
                                     );
                                   },
-                                  child: Text('Login as User', style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white)),
+                                  child: Text(
+                                    'Login as User',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white,
+                                    ),
+                                  ),
                                 ),
                               ),
                               const SizedBox(height: 16),
@@ -329,7 +397,10 @@ class LoginScreen extends StatelessWidget {
                                 height: 56,
                                 child: OutlinedButton(
                                   style: OutlinedButton.styleFrom(
-                                    side: const BorderSide(color: Color(0xFFFF6B6B), width: 2),
+                                    side: const BorderSide(
+                                      color: Color(0xFFFF6B6B),
+                                      width: 2,
+                                    ),
                                     shape: RoundedRectangleBorder(
                                       borderRadius: BorderRadius.circular(16),
                                     ),
@@ -340,26 +411,52 @@ class LoginScreen extends StatelessWidget {
                                     Navigator.push(
                                       context,
                                       MaterialPageRoute(
-                                        builder: (context) => const LoginFormScreen(userType: 'admin'),
+                                        builder: (context) =>
+                                            const LoginFormScreen(
+                                              userType: 'admin',
+                                            ),
                                       ),
                                     );
                                   },
-                                  child: Text('Login as Admin', style: GoogleFonts.poppins(fontSize: 16, fontWeight: FontWeight.w600, color: const Color(0xFFFF6B6B))),
+                                  child: Text(
+                                    'Login as Admin',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      color: const Color(0xFFFF6B6B),
+                                    ),
+                                  ),
                                 ),
                               ),
                               const SizedBox(height: 20),
                               Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  Text('New user? ', style: GoogleFonts.poppins(fontSize: 14, color: Colors.grey.shade700)),
+                                  Text(
+                                    'New user? ',
+                                    style: GoogleFonts.poppins(
+                                      fontSize: 14,
+                                      color: Colors.grey.shade700,
+                                    ),
+                                  ),
                                   GestureDetector(
                                     onTap: () {
                                       Navigator.push(
                                         context,
-                                        MaterialPageRoute(builder: (context) => const SignupFormScreen()),
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const SignupFormScreen(),
+                                        ),
                                       );
                                     },
-                                    child: Text('Sign up', style: GoogleFonts.poppins(fontSize: 14, fontWeight: FontWeight.w700, color: const Color(0xFFFF6B6B))),
+                                    child: Text(
+                                      'Sign up',
+                                      style: GoogleFonts.poppins(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                        color: const Color(0xFFFF6B6B),
+                                      ),
+                                    ),
                                   ),
                                 ],
                               ),
@@ -415,7 +512,9 @@ class _LoginFormScreenState extends State<LoginFormScreen> {
 
   Future<void> _login() async {
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please fill in all fields')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill in all fields')),
+      );
       return;
     }
 
@@ -431,10 +530,9 @@ class _LoginFormScreenState extends State<LoginFormScreen> {
 
       UserSession.name = authUser.name;
 
-      final destination =
-          widget.userType == 'admin'
-            ? const AdminDashboard()
-              : const MainNavigationPage();
+      final destination = widget.userType == 'admin'
+          ? const AdminDashboard()
+          : const MainNavigationPage();
 
       Navigator.pushAndRemoveUntil(
         context,
@@ -492,8 +590,12 @@ class _LoginFormScreenState extends State<LoginFormScreen> {
               height: 48,
               child: ElevatedButton(
                 onPressed: _loading ? null : _login,
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF6B6B)),
-                child: _loading ? const CircularProgressIndicator() : const Text('Log in'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFFF6B6B),
+                ),
+                child: _loading
+                    ? const CircularProgressIndicator()
+                    : const Text('Log in'),
               ),
             ),
           ],
@@ -527,8 +629,12 @@ class _SignupFormScreenState extends State<SignupFormScreen> {
   }
 
   Future<void> _signup() async {
-    if (_nameController.text.isEmpty || _emailController.text.isEmpty || _passwordController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please fill in all fields')));
+    if (_nameController.text.isEmpty ||
+        _emailController.text.isEmpty ||
+        _passwordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please fill in all fields')),
+      );
       return;
     }
 
@@ -546,10 +652,9 @@ class _SignupFormScreenState extends State<SignupFormScreen> {
 
       UserSession.name = authUser.name;
 
-      final destination =
-          authUser.role == 'admin'
-            ? const AdminDashboard()
-              : const MainNavigationPage();
+      final destination = authUser.role == 'admin'
+          ? const AdminDashboard()
+          : const MainNavigationPage();
 
       Navigator.pushAndRemoveUntil(
         context,
@@ -559,7 +664,9 @@ class _SignupFormScreenState extends State<SignupFormScreen> {
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message ?? 'Signup failed. Please try again.')),
+        SnackBar(
+          content: Text(e.message ?? 'Signup failed. Please try again.'),
+        ),
       );
     } on FirebaseException catch (e) {
       if (!mounted) return;
@@ -581,17 +688,31 @@ class _SignupFormScreenState extends State<SignupFormScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Sign up'), backgroundColor: const Color(0xFFFF6B6B)),
+      appBar: AppBar(
+        title: const Text('Sign up'),
+        backgroundColor: const Color(0xFFFF6B6B),
+      ),
       body: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            TextField(controller: _nameController, decoration: const InputDecoration(labelText: 'Full name')),
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(labelText: 'Full name'),
+            ),
             const SizedBox(height: 12),
-            TextField(controller: _emailController, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'Email')),
+            TextField(
+              controller: _emailController,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(labelText: 'Email'),
+            ),
             const SizedBox(height: 12),
-            TextField(controller: _passwordController, obscureText: true, decoration: const InputDecoration(labelText: 'Password')),
+            TextField(
+              controller: _passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Password'),
+            ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               initialValue: _selectedRole,
@@ -610,8 +731,12 @@ class _SignupFormScreenState extends State<SignupFormScreen> {
               height: 48,
               child: ElevatedButton(
                 onPressed: _loading ? null : _signup,
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF6B6B)),
-                child: _loading ? const CircularProgressIndicator() : const Text('Sign up'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFFFF6B6B),
+                ),
+                child: _loading
+                    ? const CircularProgressIndicator()
+                    : const Text('Sign up'),
               ),
             ),
           ],
@@ -669,9 +794,15 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
         onTap: _onItemTapped,
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
-          BottomNavigationBarItem(icon: Icon(Icons.health_and_safety), label: 'Health'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.health_and_safety),
+            label: 'Health',
+          ),
           BottomNavigationBarItem(icon: Icon(Icons.redeem), label: 'Rewards'),
-          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.settings),
+            label: 'Settings',
+          ),
         ],
       ),
     );
@@ -689,7 +820,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isOpeningPuzzlePix = false;
 
   void _goToRewards(BuildContext context) {
-    final navState = context.findAncestorStateOfType<_MainNavigationPageState>();
+    final navState = context
+        .findAncestorStateOfType<_MainNavigationPageState>();
     if (navState != null) navState.switchToTab(2);
   }
 
@@ -703,14 +835,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
       Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (context) => const PuzzleGameScreen(),
-        ),
+        MaterialPageRoute(builder: (context) => const PuzzleGameScreen()),
       );
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Unable to open Puzzle Pix levels right now.')),
+        const SnackBar(
+          content: Text('Unable to open Puzzle Pix levels right now.'),
+        ),
       );
     } finally {
       if (mounted) {
@@ -760,7 +892,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 CircleAvatar(
                   radius: 28,
                   backgroundColor: const Color(0xFFFFF5E9),
-                  child: Image.asset('assets/images/app_logo.png', height: 28, width: 28, fit: BoxFit.contain),
+                  child: Image.asset(
+                    'assets/images/app_logo.png',
+                    height: 28,
+                    width: 28,
+                    fit: BoxFit.contain,
+                  ),
                 ),
               ],
             ),
@@ -768,7 +905,12 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 20),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Text('Choose a game', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            child: Text(
+              'Choose a game',
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            ),
           ),
           const SizedBox(height: 12),
           SizedBox(
@@ -790,7 +932,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   onTap: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (context) => const MemoryMatchScreen()),
+                      MaterialPageRoute(
+                        builder: (context) => const MemoryMatchScreen(),
+                      ),
                     );
                   },
                 ),
@@ -801,7 +945,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   onTap: () {
                     Navigator.push(
                       context,
-                      MaterialPageRoute(builder: (context) => const MixAndMatchScreen()),
+                      MaterialPageRoute(
+                        builder: (context) => const MixAndMatchScreen(),
+                      ),
                     );
                   },
                 ),
@@ -814,7 +960,12 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text('Top Rewards', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+                Text(
+                  'Top Rewards',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
                 TextButton(
                   onPressed: () => _goToRewards(context),
                   child: const Text('View all'),
@@ -831,19 +982,22 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     _RewardButton(
                       title: 'Photo Memory',
-                      subtitle: 'A favorite family photo unlocked after you complete a level.',
+                      subtitle:
+                          'A favorite family photo unlocked after you complete a level.',
                       onTap: () => _goToRewards(context),
                     ),
                     const SizedBox(height: 12),
                     _RewardButton(
                       title: 'Personalized Note',
-                      subtitle: 'A loving message written just for you to read anytime.',
+                      subtitle:
+                          'A loving message written just for you to read anytime.',
                       onTap: () => _goToRewards(context),
                     ),
                     const SizedBox(height: 12),
                     _RewardButton(
                       title: 'Voice Memo',
-                      subtitle: 'A recorded voice message from family that you can unlock and replay.',
+                      subtitle:
+                          'A recorded voice message from family that you can unlock and replay.',
                       onTap: () => _goToRewards(context),
                     ),
                   ],
@@ -893,7 +1047,11 @@ class _CategoryCard extends StatelessWidget {
             Expanded(
               child: ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: Image.asset(imageAsset, width: double.infinity, fit: imageFit),
+                child: Image.asset(
+                  imageAsset,
+                  width: double.infinity,
+                  fit: imageFit,
+                ),
               ),
             ),
             const SizedBox(height: 12),
@@ -906,14 +1064,17 @@ class _CategoryCard extends StatelessWidget {
                   title,
                   maxLines: 1,
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
-                      ),
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
                 ),
               ),
             ),
             const SizedBox(height: 6),
-            const Text('Tap to explore', style: TextStyle(color: Colors.black54, fontSize: 12)),
+            const Text(
+              'Tap to explore',
+              style: TextStyle(color: Colors.black54, fontSize: 12),
+            ),
           ],
         ),
       ),
@@ -939,10 +1100,7 @@ class _RewardButton extends StatelessWidget {
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: const Color(0xFFFF6B6B), width: 2),
         boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 8,
-          ),
+          BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 8),
         ],
       ),
       child: Material(
@@ -962,17 +1120,17 @@ class _RewardButton extends StatelessWidget {
                       Text(
                         title,
                         style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: const Color(0xFF333333),
-                            ),
+                          fontWeight: FontWeight.bold,
+                          color: const Color(0xFF333333),
+                        ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         subtitle,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: const Color(0xFF6F6960),
-                              height: 1.35,
-                            ),
+                          color: const Color(0xFF6F6960),
+                          height: 1.35,
+                        ),
                       ),
                     ],
                   ),
@@ -1027,7 +1185,10 @@ class _PuzzleGameScreenState extends State<PuzzleGameScreen> {
 
   void _showMessage(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), backgroundColor: const Color(0xFFFF6B6B)),
+      SnackBar(
+        content: Text(message),
+        backgroundColor: const Color(0xFFFF6B6B),
+      ),
     );
   }
 
@@ -1061,7 +1222,9 @@ class _PuzzleGameScreenState extends State<PuzzleGameScreen> {
             color: Colors.white,
             borderRadius: BorderRadius.circular(18),
             border: Border.all(
-              color: highlighted ? const Color(0xFFFF6B6B) : const Color(0xFFE7E4DC),
+              color: highlighted
+                  ? const Color(0xFFFF6B6B)
+                  : const Color(0xFFE7E4DC),
               width: highlighted ? 2 : 1,
             ),
           ),
@@ -1136,7 +1299,9 @@ class _PuzzleGameScreenState extends State<PuzzleGameScreen> {
                 highlighted: isSelected,
                 onTap: () {
                   setState(() => _selectedLevel = index);
-                  _showMessage('Selected ${level.title}: ${level.puzzlePieces} pieces');
+                  _showMessage(
+                    'Selected ${level.title}: ${level.puzzlePieces} pieces',
+                  );
                 },
               ),
               const SizedBox(width: 12),
@@ -1147,7 +1312,9 @@ class _PuzzleGameScreenState extends State<PuzzleGameScreen> {
                 highlighted: isSelected,
                 onTap: () {
                   setState(() => _selectedLevel = index);
-                  _showMessage('${level.title} exercise: ${level.exerciseName}');
+                  _showMessage(
+                    '${level.title} exercise: ${level.exerciseName}',
+                  );
                 },
               ),
             ],
@@ -1170,7 +1337,9 @@ class _PuzzleGameScreenState extends State<PuzzleGameScreen> {
                 backgroundColor: const Color(0xFFFF6B6B),
                 foregroundColor: Colors.white,
                 minimumSize: const Size.fromHeight(46),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
               ),
             ),
           ),
@@ -1224,12 +1393,19 @@ class _PuzzleGameScreenState extends State<PuzzleGameScreen> {
 
   Future<void> _openLevelOnePuzzlePix() async {
     try {
-      final files = await AdminMediaService.instance.fetchPuzzleImagesForLinkedAdmin();
-      final imageBytes = files.map((f) => f.bytes!).toList();
+      final files = await AdminMediaService.instance
+          .fetchPuzzleImagesForLinkedAdmin();
+      final imageUrls = files
+          .map((f) => f.downloadUrl)
+          .whereType<String>()
+          .where((url) => url.isNotEmpty)
+          .toList();
       if (!mounted) return;
 
-      if (imageBytes.isEmpty) {
-        _showMessage('No images found. Ask your admin to upload images and link your account.');
+      if (imageUrls.isEmpty) {
+        _showMessage(
+          'No images found. Ask your admin to upload images and link your account.',
+        );
         return;
       }
 
@@ -1239,7 +1415,7 @@ class _PuzzleGameScreenState extends State<PuzzleGameScreen> {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => PuzzlePixScreen(imageBytes: imageBytes),
+          builder: (context) => PuzzlePixScreen(imageUrls: imageUrls),
         ),
       );
     } catch (_) {
@@ -1286,14 +1462,22 @@ class SettingsScreen extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text('Settings', style: Theme.of(context).textTheme.headlineSmall?.copyWith(color: const Color(0xFFFF6B6B), fontWeight: FontWeight.bold)),
+          Text(
+            'Settings',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              color: const Color(0xFFFF6B6B),
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           const SizedBox(height: 32),
           SizedBox(
             width: double.infinity,
             height: 48,
             child: ElevatedButton(
               onPressed: () async => _signOut(context),
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFFFF6B6B)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFFF6B6B),
+              ),
               child: const Text('Sign out'),
             ),
           ),

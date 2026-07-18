@@ -107,7 +107,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Future<void> _pickFromLocalFiles() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.image,
       withData: true,
     );
@@ -214,7 +214,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
       return _PickedMixAndMatchImage(fileName: image.name, bytes: bytes);
     }
 
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.image,
       withData: true,
     );
@@ -458,7 +458,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     String fileName,
     DateTime createdAt,
   ) async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.image,
       withData: true,
     );
@@ -1092,7 +1092,18 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     aspectRatio: 1,
                     child: reward.url == null || reward.url!.isEmpty
                         ? const ColoredBox(color: Color(0xFFFFE3DB))
-                        : Image.network(reward.url!, fit: BoxFit.cover),
+                        : Image.network(
+                            reward.url!,
+                            fit: BoxFit.cover,
+                            loadingBuilder: (context, child, loadingProgress) {
+                              if (loadingProgress == null) {
+                                return child;
+                              }
+                              return const _NetworkImageLoadingPlaceholder();
+                            },
+                            errorBuilder: (_, _, _) =>
+                                const _NetworkImageErrorPlaceholder(),
+                          ),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -1553,23 +1564,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Future<_PickedRewardAsset?> _pickExistingVoiceMemo() async {
-    final result = await FilePicker.platform.pickFiles(
+    final result = await FilePicker.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['m4a', 'mp3', 'wav', 'aac'],
       withData: true,
-      withReadStream: true,
     );
     if (result == null || result.files.isEmpty) {
       return null;
     }
 
     final picked = result.files.first;
-    if (picked.path == null &&
-        picked.bytes == null &&
-        picked.readStream == null) {
-      return null;
-    }
-
     final normalizedFileName = _normalizedRewardFileName(
       picked.name.isEmpty
           ? 'voice_memo_${DateTime.now().millisecondsSinceEpoch}.m4a'
@@ -1578,13 +1582,21 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
 
     Uint8List? bytes = picked.bytes;
-    if ((bytes == null || bytes.isEmpty) && picked.readStream != null) {
-      bytes = await _readBytesFromStream(picked.readStream!);
-    }
-    if (bytes == null && picked.path != null && picked.path!.isNotEmpty) {
+    if ((bytes == null || bytes.isEmpty) &&
+        picked.path != null &&
+        picked.path!.isNotEmpty) {
       bytes = await XFile(picked.path!).readAsBytes();
     }
     if (bytes == null || bytes.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not read the selected file. Please try again.',
+            ),
+          ),
+        );
+      }
       return null;
     }
 
@@ -1603,14 +1615,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
         fallback: 'audio/m4a',
       ),
     );
-  }
-
-  Future<Uint8List> _readBytesFromStream(Stream<List<int>> stream) async {
-    final chunks = <int>[];
-    await for (final chunk in stream) {
-      chunks.addAll(chunk);
-    }
-    return Uint8List.fromList(chunks);
   }
 
   Future<_PickedRewardAsset?> _recordVoiceMemoInApp() async {
@@ -1836,7 +1840,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Future<_PickedRewardAsset?> _pickRewardAsset(RewardType type) async {
     switch (type) {
       case RewardType.photo:
-        final image = await _imagePicker.pickImage(source: ImageSource.gallery);
+        final image = kIsWeb
+            ? await _imagePicker.pickImage(
+                source: ImageSource.gallery,
+                requestFullMetadata: false,
+              )
+            : await _imagePicker.pickImage(source: ImageSource.gallery);
         if (image == null) {
           return null;
         }
@@ -1860,21 +1869,29 @@ class _AdminDashboardState extends State<AdminDashboard> {
               format: CompressFormat.jpeg,
               quality: 94,
             );
-            if (converted.isNotEmpty) {
-              bytes = Uint8List.fromList(converted);
-              normalizedFileName = _replaceExtension(
-                normalizedFileName,
-                'jpg',
+            if (converted.isEmpty) {
+              throw StateError('HEIC conversion produced empty bytes.');
+            }
+
+            bytes = Uint8List.fromList(converted);
+            normalizedFileName = _replaceExtension(normalizedFileName, 'jpg');
+          } catch (_) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'This HEIC photo could not be converted. Please choose a JPEG or PNG image instead.',
+                  ),
+                ),
               );
             }
-          } catch (_) {
-            // Keep original bytes and extension if conversion is unavailable.
+            return null;
           }
         }
 
         return _PickedRewardAsset(
           fileName: normalizedFileName,
-          filePath: image.path,
+          filePath: kIsWeb ? normalizedFileName : image.path,
           bytes: bytes,
           contentType: _contentTypeForFileName(
             normalizedFileName,
@@ -2418,6 +2435,13 @@ class _AdminRewardPreviewBody extends StatelessWidget {
         return Image.network(
           reward.url!,
           fit: BoxFit.cover,
+          gaplessPlayback: true,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) {
+              return child;
+            }
+            return const _NetworkImageLoadingPlaceholder();
+          },
           errorBuilder: (_, _, _) => const _RewardPlaceholder(
             icon: Icons.broken_image_outlined,
             label: 'Photo',
@@ -2484,6 +2508,36 @@ class _AdminRewardPreviewBody extends StatelessWidget {
           ),
         );
     }
+  }
+}
+
+class _NetworkImageLoadingPlaceholder extends StatelessWidget {
+  const _NetworkImageLoadingPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xFFFFF0E6),
+      alignment: Alignment.center,
+      child: const SizedBox(
+        width: 24,
+        height: 24,
+        child: CircularProgressIndicator(strokeWidth: 2.2),
+      ),
+    );
+  }
+}
+
+class _NetworkImageErrorPlaceholder extends StatelessWidget {
+  const _NetworkImageErrorPlaceholder();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: const Color(0xFFFFE3DB),
+      alignment: Alignment.center,
+      child: const Icon(Icons.broken_image_outlined, color: Color(0xFF5B3E00)),
+    );
   }
 }
 

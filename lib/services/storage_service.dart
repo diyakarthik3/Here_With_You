@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -115,13 +114,6 @@ class StorageService {
 
       if (directUrl != null) {
         urls.add(directUrl);
-        continue;
-      }
-
-      final bytesBase64 = (data['bytesBase64'] as String?)?.trim();
-      if (bytesBase64 != null && bytesBase64.isNotEmpty) {
-        // Data URI fallback for records that only store base64 image content.
-        urls.add('data:image/png;base64,$bytesBase64');
       }
     }
 

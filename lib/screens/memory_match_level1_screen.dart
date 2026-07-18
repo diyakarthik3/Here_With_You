@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:here_with_you/services/admin_media_service.dart';
@@ -59,11 +58,7 @@ class _MemoryMatchLevel1ScreenState extends State<MemoryMatchLevel1Screen> {
     _cards.clear();
 
     final availablePhotos = _mediaService.uploadedFiles.value
-        .where(
-          (file) =>
-              (file.bytes?.isNotEmpty ?? false) ||
-              (file.downloadUrl?.isNotEmpty ?? false),
-        )
+        .where((file) => file.downloadUrl?.isNotEmpty ?? false)
         .toList();
     final uniquePhotos = availablePhotos.take(_totalCards ~/ 2).toList()
       ..shuffle(Random());
@@ -92,7 +87,6 @@ class _MemoryMatchLevel1ScreenState extends State<MemoryMatchLevel1Screen> {
         _MemoryCardData(
           id: cardPhotos.length,
           pairKey: photo.id,
-          imageBytes: photo.bytes,
           imageUrl: photo.downloadUrl,
           label: photo.fileName,
           color: const Color(0xFFFFE3DB),
@@ -102,7 +96,6 @@ class _MemoryMatchLevel1ScreenState extends State<MemoryMatchLevel1Screen> {
         _MemoryCardData(
           id: cardPhotos.length,
           pairKey: photo.id,
-          imageBytes: photo.bytes,
           imageUrl: photo.downloadUrl,
           label: photo.fileName,
           color: const Color(0xFFFFD7C9),
@@ -454,9 +447,7 @@ class _MemoryMatchCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final reveal = card.isFaceUp || card.isMatched;
-    final hasPhoto =
-        (card.imageBytes != null && card.imageBytes!.isNotEmpty) ||
-        (card.imageUrl != null && card.imageUrl!.isNotEmpty);
+    final hasPhoto = card.imageUrl != null && card.imageUrl!.isNotEmpty;
 
     return GestureDetector(
       onTap: onTap,
@@ -486,18 +477,28 @@ class _MemoryMatchCard extends StatelessWidget {
             if (reveal && hasPhoto)
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: card.imageBytes != null && card.imageBytes!.isNotEmpty
-                    ? Image.memory(
-                        card.imageBytes!,
-                        fit: BoxFit.cover,
-                        gaplessPlayback: true,
-                      )
-                    : Image.network(
-                        card.imageUrl!,
-                        fit: BoxFit.cover,
-                        errorBuilder: (_, _, _) =>
-                            const ColoredBox(color: Color(0xFFF6F3EE)),
+                child: Image.network(
+                  card.imageUrl!,
+                  fit: BoxFit.cover,
+                  gaplessPlayback: true,
+                  loadingBuilder: (context, child, loadingProgress) {
+                    if (loadingProgress == null) {
+                      return child;
+                    }
+                    return const ColoredBox(
+                      color: Color(0xFFF6F3EE),
+                      child: Center(
+                        child: SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
                       ),
+                    );
+                  },
+                  errorBuilder: (_, _, _) =>
+                      const ColoredBox(color: Color(0xFFF6F3EE)),
+                ),
               )
             else if (reveal)
               Center(
@@ -563,7 +564,6 @@ class _MemoryCardData {
   final int id;
   final String pairKey;
   final Color color;
-  final Uint8List? imageBytes;
   final String? imageUrl;
   final String? label;
   bool isFaceUp = false;
@@ -573,7 +573,6 @@ class _MemoryCardData {
     required this.id,
     required this.pairKey,
     required this.color,
-    this.imageBytes,
     this.imageUrl,
     this.label,
   });

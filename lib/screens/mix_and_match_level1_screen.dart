@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -24,11 +22,7 @@ class _MixAndMatchLevel1ScreenState extends State<MixAndMatchLevel1Screen> {
   Future<void> _loadItems() async {
     final pairs = await _mediaService.fetchMixAndMatchPairsForLinkedAdmin();
     final usablePairs = pairs
-        .where(
-          (pair) =>
-              pair.imageBytes.isNotEmpty ||
-              (pair.imageUrl?.isNotEmpty ?? false),
-        )
+        .where((pair) => pair.imageUrl?.isNotEmpty ?? false)
         .take(4)
         .toList();
 
@@ -36,8 +30,7 @@ class _MixAndMatchLevel1ScreenState extends State<MixAndMatchLevel1Screen> {
         .map(
           (pair) => _MixMatchItem(
             id: pair.id,
-            imageBytes: pair.imageBytes.isNotEmpty ? pair.imageBytes : null,
-            imageUrl: pair.imageUrl,
+            imageUrl: pair.imageUrl!,
             description: pair.description.trim().isEmpty
                 ? 'No description added yet.'
                 : pair.description.trim(),
@@ -249,14 +242,12 @@ class _MixAndMatchLevel1ScreenState extends State<MixAndMatchLevel1Screen> {
 
 class _MixMatchItem {
   final String id;
-  final Uint8List? imageBytes;
-  final String? imageUrl;
+  final String imageUrl;
   final String description;
 
   const _MixMatchItem({
     required this.id,
-    this.imageBytes,
-    this.imageUrl,
+    required this.imageUrl,
     required this.description,
   });
 }
@@ -275,23 +266,30 @@ class _PhotoCard extends StatelessWidget {
         border: Border.all(color: const Color(0xFFE7E4DC)),
       ),
       clipBehavior: Clip.antiAlias,
-      child: item.imageBytes != null && item.imageBytes!.isNotEmpty
-          ? Image.memory(item.imageBytes!, fit: BoxFit.cover)
-          : (item.imageUrl != null && item.imageUrl!.isNotEmpty
-                ? Image.network(
-                    item.imageUrl!,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, _, _) => Container(
-                      color: const Color(0xFFFFE3DB),
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.image_outlined),
-                    ),
-                  )
-                : Container(
-                    color: const Color(0xFFFFE3DB),
-                    alignment: Alignment.center,
-                    child: const Icon(Icons.image_outlined),
-                  )),
+      child: Image.network(
+        item.imageUrl,
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) {
+            return child;
+          }
+          return Container(
+            color: const Color(0xFFFFF0E6),
+            alignment: Alignment.center,
+            child: const SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          );
+        },
+        errorBuilder: (_, _, _) => Container(
+          color: const Color(0xFFFFE3DB),
+          alignment: Alignment.center,
+          child: const Icon(Icons.image_outlined),
+        ),
+      ),
     );
   }
 }
